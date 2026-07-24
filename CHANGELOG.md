@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.1
+
+- Clarify STATE as macro project situation (milestones, blockers, waiting on user)
+- Distinguish STATE from per-tool audit logs (pi-tool-wal)
+- Tighten tool descriptions and README so agents update STATE only when the overall picture changes
+
 ## 0.1.0
 
 - Initial release
