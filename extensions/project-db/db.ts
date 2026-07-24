@@ -11,7 +11,7 @@ import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import type {
-	BulletItem,
+	CompletedWorkItem,
 	Decision,
 	DecisionAddInput,
 	Handoff,
@@ -19,9 +19,10 @@ import type {
 	HandoffStatus,
 	ProjectState,
 	StateUpdateInput,
+	SubgoalItem,
 } from "./types.ts";
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 const TABLES_SQL = `
 CREATE TABLE IF NOT EXISTS meta (
@@ -41,12 +42,14 @@ CREATE TABLE IF NOT EXISTS state_revisions (
   project_key TEXT NOT NULL,
   created_at INTEGER NOT NULL,
   session_id TEXT,
-  one_line_status TEXT NOT NULL DEFAULT '',
-  how_to_run TEXT NOT NULL DEFAULT '',
-  recently_done_json TEXT NOT NULL DEFAULT '[]',
-  in_progress_json TEXT NOT NULL DEFAULT '[]',
-  shelved_json TEXT NOT NULL DEFAULT '[]',
-  waiting_on_user_json TEXT NOT NULL DEFAULT '[]'
+  main_goal TEXT NOT NULL DEFAULT '',
+  current_subgoal TEXT NOT NULL DEFAULT '',
+  completed_work_json TEXT NOT NULL DEFAULT '[]',
+  next_plan TEXT NOT NULL DEFAULT '',
+  next_plan_why TEXT NOT NULL DEFAULT '',
+  completed_subgoals_json TEXT NOT NULL DEFAULT '[]',
+  open_subgoals_json TEXT NOT NULL DEFAULT '[]',
+  how_to_run TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS decisions (
@@ -100,40 +103,57 @@ function todayLocal(): string {
 	return `${y}-${m}-${day}`;
 }
 
-function parseBullets(json: string): BulletItem[] {
+function parseJsonArray(json: string): unknown[] {
 	try {
 		const v = JSON.parse(json) as unknown;
-		if (!Array.isArray(v)) return [];
-		return v
-			.map((item) => {
-				if (typeof item === "string") return { text: item };
-				if (item && typeof item === "object") {
-					const o = item as Record<string, unknown>;
-					const text = typeof o.text === "string" ? o.text : "";
-					if (!text) return null;
-					const date = typeof o.date === "string" ? o.date : undefined;
-					return date ? { date, text } : { text };
-				}
-				return null;
-			})
-			.filter((x): x is BulletItem => x != null);
+		return Array.isArray(v) ? v : [];
 	} catch {
 		return [];
 	}
 }
 
-function bulletsJson(items: BulletItem[]): string {
-	return JSON.stringify(items ?? []);
+function parseCompletedWork(json: string): CompletedWorkItem[] {
+	return parseJsonArray(json)
+		.map((item) => {
+			if (typeof item === "string") {
+				return { text: item, why: "" };
+			}
+			if (item && typeof item === "object") {
+				const o = item as Record<string, unknown>;
+				const text =
+					typeof o.text === "string"
+						? o.text
+						: typeof o.title === "string"
+							? o.title
+							: "";
+				if (!text) return null;
+				const why = typeof o.why === "string" ? o.why : "";
+				const date = typeof o.date === "string" ? o.date : undefined;
+				return date ? { text, why, date } : { text, why };
+			}
+			return null;
+		})
+		.filter((x): x is CompletedWorkItem => x != null);
+}
+
+function parseSubgoals(json: string): SubgoalItem[] {
+	return parseJsonArray(json)
+		.map((item) => {
+			if (typeof item === "string") return { text: item };
+			if (item && typeof item === "object") {
+				const o = item as Record<string, unknown>;
+				const text = typeof o.text === "string" ? o.text : "";
+				if (!text) return null;
+				const date = typeof o.date === "string" ? o.date : undefined;
+				return date ? { text, date } : { text };
+			}
+			return null;
+		})
+		.filter((x): x is SubgoalItem => x != null);
 }
 
 function parseFiles(json: string): string[] {
-	try {
-		const v = JSON.parse(json) as unknown;
-		if (!Array.isArray(v)) return [];
-		return v.filter((x): x is string => typeof x === "string");
-	} catch {
-		return [];
-	}
+	return parseJsonArray(json).filter((x): x is string => typeof x === "string");
 }
 
 function emptyState(projectKey: string): ProjectState {
@@ -141,27 +161,52 @@ function emptyState(projectKey: string): ProjectState {
 		projectKey,
 		updatedAt: 0,
 		sessionId: null,
-		oneLineStatus: "",
+		mainGoal: "",
+		currentSubgoal: "",
+		completedWork: [],
+		nextPlan: "",
+		nextPlanWhy: "",
+		completedSubgoals: [],
+		openSubgoals: [],
 		howToRun: "",
-		recentlyDone: [],
-		inProgress: [],
-		shelved: [],
-		waitingOnUser: [],
 		revisionId: "",
 	};
 }
 
 function rowToState(row: Record<string, unknown>): ProjectState {
+	// v2 columns
+	if ("main_goal" in row || "completed_work_json" in row) {
+		return {
+			projectKey: String(row.project_key),
+			updatedAt: Number(row.created_at),
+			sessionId: (row.session_id as string | null) ?? null,
+			mainGoal: String(row.main_goal ?? ""),
+			currentSubgoal: String(row.current_subgoal ?? ""),
+			completedWork: parseCompletedWork(String(row.completed_work_json ?? "[]")),
+			nextPlan: String(row.next_plan ?? ""),
+			nextPlanWhy: String(row.next_plan_why ?? ""),
+			completedSubgoals: parseSubgoals(String(row.completed_subgoals_json ?? "[]")),
+			openSubgoals: parseSubgoals(String(row.open_subgoals_json ?? "[]")),
+			howToRun: String(row.how_to_run ?? ""),
+			revisionId: String(row.id),
+		};
+	}
+
+	// Legacy v1 row shape (pre-migration read path)
+	const legacyDone = parseJsonArray(String(row.recently_done_json ?? "[]"));
+	const legacyInProgress = parseJsonArray(String(row.in_progress_json ?? "[]"));
 	return {
 		projectKey: String(row.project_key),
 		updatedAt: Number(row.created_at),
 		sessionId: (row.session_id as string | null) ?? null,
-		oneLineStatus: String(row.one_line_status ?? ""),
+		mainGoal: "",
+		currentSubgoal: String(row.one_line_status ?? ""),
+		completedWork: parseCompletedWork(JSON.stringify(legacyDone)),
+		nextPlan: "",
+		nextPlanWhy: "",
+		completedSubgoals: [],
+		openSubgoals: parseSubgoals(JSON.stringify(legacyInProgress)),
 		howToRun: String(row.how_to_run ?? ""),
-		recentlyDone: parseBullets(String(row.recently_done_json ?? "[]")),
-		inProgress: parseBullets(String(row.in_progress_json ?? "[]")),
-		shelved: parseBullets(String(row.shelved_json ?? "[]")),
-		waitingOnUser: parseBullets(String(row.waiting_on_user_json ?? "[]")),
 		revisionId: String(row.id),
 	};
 }
@@ -197,6 +242,85 @@ function rowToHandoff(row: Record<string, unknown>): Handoff {
 	};
 }
 
+function tableColumns(db: DatabaseSync, table: string): Set<string> {
+	const cols = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+	return new Set(cols.map((c) => c.name));
+}
+
+function setSchemaVersion(db: DatabaseSync, version: number): void {
+	db.prepare(
+		`INSERT INTO meta(key, value) VALUES ('schema_version', ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+	).run(String(version));
+}
+
+function migrate(db: DatabaseSync): void {
+	const versionRow = db
+		.prepare("SELECT value FROM meta WHERE key = 'schema_version'")
+		.get() as { value?: string } | undefined;
+	let version = versionRow?.value ? Number(versionRow.value) : 0;
+	if (!Number.isFinite(version)) version = 0;
+
+	if (!versionRow) {
+		db.prepare(
+			"INSERT INTO meta(key, value) VALUES ('schema_version', ?), ('created_at', ?)",
+		).run(String(SCHEMA_VERSION), String(Date.now()));
+		return;
+	}
+
+	if (version < 2) {
+		const cols = tableColumns(db, "state_revisions");
+		const add = (name: string, decl: string) => {
+			if (!cols.has(name)) db.exec(`ALTER TABLE state_revisions ADD COLUMN ${decl}`);
+		};
+		add("main_goal", "main_goal TEXT NOT NULL DEFAULT ''");
+		add("current_subgoal", "current_subgoal TEXT NOT NULL DEFAULT ''");
+		add("completed_work_json", "completed_work_json TEXT NOT NULL DEFAULT '[]'");
+		add("next_plan", "next_plan TEXT NOT NULL DEFAULT ''");
+		add("next_plan_why", "next_plan_why TEXT NOT NULL DEFAULT ''");
+		add("completed_subgoals_json", "completed_subgoals_json TEXT NOT NULL DEFAULT '[]'");
+		add("open_subgoals_json", "open_subgoals_json TEXT NOT NULL DEFAULT '[]'");
+		// how_to_run already exists on v1
+
+		// Best-effort backfill from v1 columns when present.
+		const legacyCols = tableColumns(db, "state_revisions");
+		if (legacyCols.has("one_line_status")) {
+			db.exec(`
+        UPDATE state_revisions
+        SET current_subgoal = CASE
+              WHEN TRIM(COALESCE(current_subgoal, '')) = '' THEN COALESCE(one_line_status, '')
+              ELSE current_subgoal
+            END
+        WHERE TRIM(COALESCE(current_subgoal, '')) = ''
+          AND TRIM(COALESCE(one_line_status, '')) != ''
+      `);
+		}
+		if (legacyCols.has("recently_done_json")) {
+			db.exec(`
+        UPDATE state_revisions
+        SET completed_work_json = recently_done_json
+        WHERE (completed_work_json IS NULL OR completed_work_json = '' OR completed_work_json = '[]')
+          AND recently_done_json IS NOT NULL
+          AND recently_done_json != ''
+          AND recently_done_json != '[]'
+      `);
+		}
+		if (legacyCols.has("in_progress_json")) {
+			db.exec(`
+        UPDATE state_revisions
+        SET open_subgoals_json = in_progress_json
+        WHERE (open_subgoals_json IS NULL OR open_subgoals_json = '' OR open_subgoals_json = '[]')
+          AND in_progress_json IS NOT NULL
+          AND in_progress_json != ''
+          AND in_progress_json != '[]'
+      `);
+		}
+
+		version = 2;
+		setSchemaVersion(db, version);
+	}
+}
+
 export class ProjectDbStore {
 	readonly dbPath: string;
 	private db: DatabaseSync | null = null;
@@ -217,16 +341,8 @@ export class ProjectDbStore {
 		db.exec("PRAGMA synchronous = NORMAL;");
 		db.exec("PRAGMA busy_timeout = 5000;");
 		db.exec(TABLES_SQL);
+		migrate(db);
 		db.exec(INDEXES_SQL);
-
-		const versionRow = db
-			.prepare("SELECT value FROM meta WHERE key = 'schema_version'")
-			.get() as { value?: string } | undefined;
-		if (!versionRow) {
-			db.prepare(
-				"INSERT INTO meta(key, value) VALUES ('schema_version', ?), ('created_at', ?)",
-			).run(String(SCHEMA_VERSION), String(Date.now()));
-		}
 		this.db = db;
 	}
 
@@ -279,26 +395,49 @@ export class ProjectDbStore {
 		const current = this.getState(projectKey);
 		const replace = input.replaceLists !== false;
 
-		const mergeList = (
-			incoming: BulletItem[] | undefined,
-			existing: BulletItem[],
-		): BulletItem[] => {
+		const mergeWork = (
+			incoming: CompletedWorkItem[] | undefined,
+			existing: CompletedWorkItem[],
+		): CompletedWorkItem[] => {
+			if (incoming === undefined) return existing;
+			if (replace) return incoming;
+			return [...existing, ...incoming];
+		};
+
+		const mergeSubgoals = (
+			incoming: SubgoalItem[] | undefined,
+			existing: SubgoalItem[],
+		): SubgoalItem[] => {
 			if (incoming === undefined) return existing;
 			if (replace) return incoming;
 			return [...existing, ...incoming];
 		};
 
 		const next = {
-			oneLineStatus:
-				input.oneLineStatus !== undefined
-					? input.oneLineStatus
-					: current.oneLineStatus,
+			mainGoal: input.mainGoal !== undefined ? input.mainGoal : current.mainGoal,
+			currentSubgoal:
+				input.currentSubgoal !== undefined
+					? input.currentSubgoal
+					: current.currentSubgoal,
+			completedWork: mergeWork(input.completedWork, current.completedWork),
+			nextPlan: input.nextPlan !== undefined ? input.nextPlan : current.nextPlan,
+			nextPlanWhy:
+				input.nextPlanWhy !== undefined ? input.nextPlanWhy : current.nextPlanWhy,
+			completedSubgoals: mergeSubgoals(
+				input.completedSubgoals,
+				current.completedSubgoals,
+			),
+			openSubgoals: mergeSubgoals(input.openSubgoals, current.openSubgoals),
 			howToRun: input.howToRun !== undefined ? input.howToRun : current.howToRun,
-			recentlyDone: mergeList(input.recentlyDone, current.recentlyDone),
-			inProgress: mergeList(input.inProgress, current.inProgress),
-			shelved: mergeList(input.shelved, current.shelved),
-			waitingOnUser: mergeList(input.waitingOnUser, current.waitingOnUser),
 		};
+
+		// Normalize empty next plan -> clear why
+		if (!next.nextPlan.trim()) {
+			next.nextPlan = "";
+			if (input.nextPlan !== undefined || !next.nextPlanWhy.trim()) {
+				next.nextPlanWhy = input.nextPlanWhy !== undefined ? input.nextPlanWhy : "";
+			}
+		}
 
 		const db = this.requireDb();
 		const id = randomUUID();
@@ -306,20 +445,24 @@ export class ProjectDbStore {
 		db.prepare(
 			`INSERT INTO state_revisions (
         id, project_key, created_at, session_id,
-        one_line_status, how_to_run,
-        recently_done_json, in_progress_json, shelved_json, waiting_on_user_json
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        main_goal, current_subgoal, completed_work_json,
+        next_plan, next_plan_why,
+        completed_subgoals_json, open_subgoals_json,
+        how_to_run
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		).run(
 			id,
 			projectKey,
 			now,
 			sessionId ?? null,
-			next.oneLineStatus,
+			next.mainGoal.trim(),
+			next.currentSubgoal.trim(),
+			JSON.stringify(next.completedWork),
+			next.nextPlan.trim(),
+			next.nextPlanWhy.trim(),
+			JSON.stringify(next.completedSubgoals),
+			JSON.stringify(next.openSubgoals),
 			next.howToRun,
-			bulletsJson(next.recentlyDone),
-			bulletsJson(next.inProgress),
-			bulletsJson(next.shelved),
-			bulletsJson(next.waitingOnUser),
 		);
 
 		return this.getState(projectKey);
@@ -458,9 +601,7 @@ export class ProjectDbStore {
 	): Handoff | null {
 		const db = this.requireDb();
 		const target =
-			id != null
-				? this.getHandoff(id)
-				: this.getOpenHandoff(projectKey);
+			id != null ? this.getHandoff(id) : this.getOpenHandoff(projectKey);
 		if (!target || target.projectKey !== projectKey) return null;
 		if (target.status !== "open") return target;
 

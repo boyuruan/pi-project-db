@@ -5,7 +5,13 @@
 import { existsSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-import type { BulletItem, Decision, Handoff, ProjectState } from "./types.ts";
+import type {
+	CompletedWorkItem,
+	Decision,
+	Handoff,
+	ProjectState,
+	SubgoalItem,
+} from "./types.ts";
 
 export const STATE_FILENAME = "STATE.md";
 export const DECISIONS_FILENAME = "DECISIONS.md";
@@ -20,12 +26,20 @@ function formatDate(ms: number): string {
 	return `${y}-${m}-${day}`;
 }
 
-function bulletLines(items: BulletItem[], empty = "None."): string {
+function subgoalLines(items: SubgoalItem[], empty = "None."): string {
+	if (!items.length) return `- ${empty}`;
+	return items
+		.map((item) => (item.date ? `- [${item.date}] ${item.text}` : `- ${item.text}`))
+		.join("\n");
+}
+
+function completedWorkLines(items: CompletedWorkItem[], empty = "None."): string {
 	if (!items.length) return `- ${empty}`;
 	return items
 		.map((item) => {
-			if (item.date) return `- [${item.date}] ${item.text}`;
-			return `- ${item.text}`;
+			const head = item.date ? `- [${item.date}] ${item.text}` : `- ${item.text}`;
+			const why = item.why.trim() ? `\n  - why: ${item.why.trim()}` : "\n  - why: (missing)";
+			return head + why;
 		})
 		.join("\n");
 }
@@ -35,42 +49,55 @@ export function renderStateMarkdown(state: ProjectState): string {
 	const howToRun = state.howToRun.trim()
 		? state.howToRun.trim()
 		: "[add shortest build / test / run commands]";
-	const status = state.oneLineStatus.trim() || "[one-line status]";
+	const mainGoal = state.mainGoal.trim() || "[main project goal]";
+	const current = state.currentSubgoal.trim() || "[none / idle]";
+	const nextPlan = state.nextPlan.trim() || "[none — work complete or not planned]";
+	const nextWhy = state.nextPlan.trim()
+		? state.nextPlanWhy.trim() || "[why this serves main/current goal]"
+		: "[n/a]";
 
 	return `# Project state
 
 <!--
-  Managed by pi-project-db. Macro situation only (not a per-tool log).
-  Prefer project_state_update; do not hand-edit structure.
+  Managed by pi-project-db. Structured macro snapshot (goals + progress).
+  Not a per-tool log. Prefer project_state_update.
 -->
 
 Updated: ${updated}
 
-## One-line status
+## Main goal
 
-${status}
+${mainGoal}
+
+## Current subgoal
+
+${current}
+
+## Completed work
+
+${completedWorkLines(state.completedWork)}
+
+## Next plan
+
+${nextPlan}
+
+### Why this next plan
+
+${nextWhy}
+
+## Completed subgoals
+
+${subgoalLines(state.completedSubgoals)}
+
+## Open subgoals
+
+${subgoalLines(state.openSubgoals)}
 
 ## How to run
 
 \`\`\`
 ${howToRun}
 \`\`\`
-
-## Recently done
-
-${bulletLines(state.recentlyDone)}
-
-## In progress
-
-${bulletLines(state.inProgress)}
-
-## Shelved or abandoned
-
-${bulletLines(state.shelved)}
-
-## Waiting on the user
-
-${bulletLines(state.waitingOnUser)}
 `;
 }
 

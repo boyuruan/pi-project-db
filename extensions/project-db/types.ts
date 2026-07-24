@@ -4,39 +4,66 @@
  * SQLite is the source of truth. Markdown files in the project root are
  * materializations for humans and git (strategy A).
  *
- * STATE holds the macro project situation (milestones, blockers, waiting on
- * the user). It is not a per-tool operation log (see pi-tool-wal).
+ * STATE is a structured macro snapshot: goals, completed work (with why),
+ * next plan (with why), and subgoal lists. Not a per-tool log (pi-tool-wal).
  */
 
 export type HandoffStatus = "open" | "consumed" | "superseded";
 
-export interface BulletItem {
-	/** Optional date label, e.g. 2026-07-17 or 07-12 */
-	date?: string;
+/** Completed work unit with an explicit link to the main/current goal. */
+export interface CompletedWorkItem {
+	/** What was finished (coarse, durable). */
 	text: string;
+	/** Why it matters for main_goal and/or current_subgoal. */
+	why: string;
+	/** Optional date label, e.g. 2026-07-17 */
+	date?: string;
 }
 
+/** A subgoal entry (completed or still open). */
+export interface SubgoalItem {
+	text: string;
+	date?: string;
+}
+
+/**
+ * Macro project situation.
+ *
+ * Answers: two weeks later, what is the goal tree and where are we on it?
+ */
 export interface ProjectState {
 	projectKey: string;
 	updatedAt: number;
 	sessionId: string | null;
-	oneLineStatus: string;
+	/** Top-level project goal. */
+	mainGoal: string;
+	/** Active subgoal under mainGoal (empty if idle / fully done). */
+	currentSubgoal: string;
+	/** Finished work items, each with why it serves the goal(s). */
+	completedWork: CompletedWorkItem[];
+	/** Next concrete plan; empty if nothing planned or work is complete. */
+	nextPlan: string;
+	/** How nextPlan serves mainGoal / currentSubgoal (empty if nextPlan empty). */
+	nextPlanWhy: string;
+	/** Subgoals already finished. */
+	completedSubgoals: SubgoalItem[];
+	/** Subgoals not finished yet (includes current and queued). */
+	openSubgoals: SubgoalItem[];
+	/** Shortest commands to build/test/run (practical pickup, not narrative). */
 	howToRun: string;
-	recentlyDone: BulletItem[];
-	inProgress: BulletItem[];
-	shelved: BulletItem[];
-	waitingOnUser: BulletItem[];
 	/** Revision id of this snapshot */
 	revisionId: string;
 }
 
 export interface StateUpdateInput {
-	oneLineStatus?: string;
+	mainGoal?: string;
+	currentSubgoal?: string;
+	completedWork?: CompletedWorkItem[];
+	nextPlan?: string;
+	nextPlanWhy?: string;
+	completedSubgoals?: SubgoalItem[];
+	openSubgoals?: SubgoalItem[];
 	howToRun?: string;
-	recentlyDone?: BulletItem[];
-	inProgress?: BulletItem[];
-	shelved?: BulletItem[];
-	waitingOnUser?: BulletItem[];
 	/**
 	 * When true (default), list fields replace the current lists.
 	 * When false, provided list items are appended.

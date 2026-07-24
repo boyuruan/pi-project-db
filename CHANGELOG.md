@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.0
+
+- Restructure STATE into a goal-oriented schema:
+  - `mainGoal`, `currentSubgoal`
+  - `completedWork[{ text, why, date? }]`
+  - `nextPlan`, `nextPlanWhy` (next plan may be empty when complete)
+  - `completedSubgoals[]`, `openSubgoals[]`
+  - `howToRun`
+- SQLite schema version 2 with migration from v1 lists
+- Update STATE.md export, tools, and docs
+
 ## 0.1.1
 
 - Clarify STATE as macro project situation (milestones, blockers, waiting on user)

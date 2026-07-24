@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, existsSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, it } from "node:test";
@@ -25,19 +25,31 @@ afterEach(() => {
 });
 
 describe("ProjectDbStore", () => {
-	it("updates state revisions and exports STATE.md", () => {
+	it("updates structured state and exports STATE.md", () => {
 		const { root, store } = tempRoot();
 		const key = "git:example.com/app";
 		store.touchProject(key, "git", root);
 
 		const state = store.updateState(key, {
-			oneLineStatus: "Building feature X",
+			mainGoal: "Ship hybrid search demo",
+			currentSubgoal: "Finish B5 PPR path",
 			howToRun: "npm test",
-			recentlyDone: [{ date: "2026-07-24", text: "Scaffolded package" }],
-			inProgress: [{ text: "Export markdown" }],
+			completedWork: [
+				{
+					date: "2026-07-24",
+					text: "Scaffolded package",
+					why: "Unblocks publishing the project-db extension under main goal",
+				},
+			],
+			nextPlan: "Add GDS engine tests",
+			nextPlanWhy: "Current subgoal needs GDS path green before closing B5",
+			completedSubgoals: [{ text: "Define STATE schema" }],
+			openSubgoals: [{ text: "Finish B5 PPR path" }, { text: "Write user docs" }],
 		});
 
-		assert.equal(state.oneLineStatus, "Building feature X");
+		assert.equal(state.mainGoal, "Ship hybrid search demo");
+		assert.equal(state.currentSubgoal, "Finish B5 PPR path");
+		assert.equal(state.completedWork[0]?.why.includes("main goal"), true);
 		assert.equal(store.listStateRevisions(key).length, 1);
 
 		const exported = exportProjectMarkdown(root, {
@@ -46,8 +58,10 @@ describe("ProjectDbStore", () => {
 			openHandoff: null,
 		});
 		const md = readFileSync(exported.statePath, "utf8");
-		assert.match(md, /Building feature X/);
-		assert.match(md, /Scaffolded package/);
+		assert.match(md, /Main goal/);
+		assert.match(md, /Ship hybrid search demo/);
+		assert.match(md, /why: Unblocks publishing/);
+		assert.match(md, /Open subgoals/);
 		assert.equal(existsSync(join(root, "HANDOFF.md")), false);
 		store.close();
 	});
@@ -114,21 +128,36 @@ describe("ProjectDbStore", () => {
 		store.close();
 	});
 
-	it("append mode for state lists", () => {
+	it("append mode for completed work lists", () => {
 		const { store } = tempRoot();
 		const key = "p";
 		store.updateState(key, {
-			recentlyDone: [{ text: "one" }],
+			completedWork: [{ text: "one", why: "serves main goal step 1" }],
 		});
 		store.updateState(key, {
-			recentlyDone: [{ text: "two" }],
+			completedWork: [{ text: "two", why: "serves main goal step 2" }],
 			replaceLists: false,
 		});
 		const state = store.getState(key);
 		assert.deepEqual(
-			state.recentlyDone.map((b) => b.text),
+			state.completedWork.map((b) => b.text),
 			["one", "two"],
 		);
+		store.close();
+	});
+
+	it("allows empty next plan when work is complete", () => {
+		const { store } = tempRoot();
+		const state = store.updateState("p", {
+			mainGoal: "Done project",
+			currentSubgoal: "",
+			nextPlan: "",
+			nextPlanWhy: "",
+			openSubgoals: [],
+			completedSubgoals: [{ text: "Everything" }],
+		});
+		assert.equal(state.nextPlan, "");
+		assert.equal(state.openSubgoals.length, 0);
 		store.close();
 	});
 });

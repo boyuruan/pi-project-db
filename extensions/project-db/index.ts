@@ -4,8 +4,8 @@
  * Source of truth: ~/.pi/agent/project-db/project.db
  * Materialized files (project root): STATE.md, DECISIONS.md, HANDOFF.md
  *
- * STATE = macro project situation (milestones, blockers, waiting on user).
- * It is not a per-tool operation log — that role belongs to pi-tool-wal.
+ * STATE = structured goal snapshot (main/current goal, completed work+why,
+ * next plan+why, subgoal lists). Not a per-tool log (pi-tool-wal).
  *
  * HANDOFF.md reflects only the current open handoff. History is queried from DB.
  *
@@ -31,16 +31,25 @@ import {
 	resolveProjectIdentity,
 } from "./project-id.ts";
 import type {
-	BulletItem,
+	CompletedWorkItem,
 	Decision,
 	Handoff,
 	ProjectMeta,
 	ProjectState,
+	SubgoalItem,
 } from "./types.ts";
 
-const BulletSchema = Type.Object({
-	date: Type.Optional(Type.String({ description: "Optional date label, e.g. 2026-07-17" })),
-	text: Type.String({ description: "Bullet text" }),
+const CompletedWorkSchema = Type.Object({
+	text: Type.String({ description: "What was finished (coarse, durable)" }),
+	why: Type.String({
+		description: "Why this serves main_goal and/or current_subgoal",
+	}),
+	date: Type.Optional(Type.String({ description: "Optional date, e.g. 2026-07-17" })),
+});
+
+const SubgoalSchema = Type.Object({
+	text: Type.String({ description: "Subgoal text" }),
+	date: Type.Optional(Type.String({ description: "Optional date label" })),
 });
 
 function metaFromCtx(ctx: ExtensionContext): ProjectMeta {
@@ -89,19 +98,27 @@ function formatState(state: ProjectState): string {
 		`updated: ${state.updatedAt ? new Date(state.updatedAt).toISOString() : "never"}`,
 		`revision: ${state.revisionId || "(none)"}`,
 		"",
-		`status: ${state.oneLineStatus || "(empty)"}`,
+		`main goal: ${state.mainGoal || "(empty)"}`,
+		`current subgoal: ${state.currentSubgoal || "(none)"}`,
+		"",
+		`completed work (${state.completedWork.length}):`,
+		...state.completedWork.map(
+			(b) =>
+				`  - ${b.date ? `[${b.date}] ` : ""}${b.text}\n    why: ${b.why || "(missing)"}`,
+		),
+		"",
+		`next plan: ${state.nextPlan || "(none)"}`,
+		`next plan why: ${state.nextPlanWhy || "(n/a)"}`,
+		"",
+		`completed subgoals (${state.completedSubgoals.length}):`,
+		...state.completedSubgoals.map(
+			(b) => `  - ${b.date ? `[${b.date}] ` : ""}${b.text}`,
+		),
+		`open subgoals (${state.openSubgoals.length}):`,
+		...state.openSubgoals.map((b) => `  - ${b.date ? `[${b.date}] ` : ""}${b.text}`),
 		"",
 		"how to run:",
 		state.howToRun || "(empty)",
-		"",
-		`recently done (${state.recentlyDone.length}):`,
-		...state.recentlyDone.map((b) => `  - ${b.date ? `[${b.date}] ` : ""}${b.text}`),
-		`in progress (${state.inProgress.length}):`,
-		...state.inProgress.map((b) => `  - ${b.date ? `[${b.date}] ` : ""}${b.text}`),
-		`shelved (${state.shelved.length}):`,
-		...state.shelved.map((b) => `  - ${b.date ? `[${b.date}] ` : ""}${b.text}`),
-		`waiting on user (${state.waitingOnUser.length}):`,
-		...state.waitingOnUser.map((b) => `  - ${b.date ? `[${b.date}] ` : ""}${b.text}`),
 	];
 	return lines.join("\n");
 }
@@ -169,7 +186,7 @@ export default function (pi: ExtensionAPI) {
 		name: "project_state_get",
 		label: "Project State Get",
 		description:
-			"Read the project's macro STATE (overall situation: what is done, in flight, shelved, waiting on the user). Not a per-tool log.",
+			"Read structured project STATE: main goal, current subgoal, completed work (with why), next plan (with why), completed/open subgoals, how to run. Not a per-tool log.",
 		parameters: Type.Object({}),
 		async execute(_id, _params, _signal, _onUpdate, ctx) {
 			if (!ensureStore(store)) return textResult("project-db unavailable");
@@ -184,14 +201,30 @@ export default function (pi: ExtensionAPI) {
 		name: "project_state_update",
 		label: "Project State Update",
 		description:
-			"Update the project's macro STATE in SQLite and export STATE.md. Use when the overall situation changed (milestone landed, work blocked, item shelved, waiting on user)—not after every tool call. Keep bullets coarse and durable. Omitting a field leaves it unchanged. List fields replace by default; set replaceLists=false to append.",
+			"Update structured project STATE in SQLite and export STATE.md. Fields: mainGoal, currentSubgoal, completedWork[{text,why}], nextPlan, nextPlanWhy, completedSubgoals, openSubgoals, howToRun. Use when the goal tree or progress picture changes—not after every tool call. Each completedWork item must include why (link to main/current goal). nextPlan may be empty if work is done. Omitting a field leaves it unchanged. Lists replace by default; replaceLists=false appends.",
 		parameters: Type.Object({
-			oneLineStatus: Type.Optional(Type.String()),
-			howToRun: Type.Optional(Type.String()),
-			recentlyDone: Type.Optional(Type.Array(BulletSchema)),
-			inProgress: Type.Optional(Type.Array(BulletSchema)),
-			shelved: Type.Optional(Type.Array(BulletSchema)),
-			waitingOnUser: Type.Optional(Type.Array(BulletSchema)),
+			mainGoal: Type.Optional(
+				Type.String({ description: "Top-level project goal" }),
+			),
+			currentSubgoal: Type.Optional(
+				Type.String({ description: "Active subgoal under mainGoal" }),
+			),
+			completedWork: Type.Optional(Type.Array(CompletedWorkSchema)),
+			nextPlan: Type.Optional(
+				Type.String({
+					description: "Next concrete plan; empty if nothing planned or complete",
+				}),
+			),
+			nextPlanWhy: Type.Optional(
+				Type.String({
+					description: "How nextPlan serves mainGoal / currentSubgoal",
+				}),
+			),
+			completedSubgoals: Type.Optional(Type.Array(SubgoalSchema)),
+			openSubgoals: Type.Optional(Type.Array(SubgoalSchema)),
+			howToRun: Type.Optional(
+				Type.String({ description: "Shortest build/test/run commands" }),
+			),
 			replaceLists: Type.Optional(
 				Type.Boolean({
 					description: "Default true: replace list fields. false: append items.",
@@ -205,12 +238,14 @@ export default function (pi: ExtensionAPI) {
 			const state = store.updateState(
 				meta.projectKey,
 				{
-					oneLineStatus: params.oneLineStatus,
+					mainGoal: params.mainGoal,
+					currentSubgoal: params.currentSubgoal,
+					completedWork: params.completedWork as CompletedWorkItem[] | undefined,
+					nextPlan: params.nextPlan,
+					nextPlanWhy: params.nextPlanWhy,
+					completedSubgoals: params.completedSubgoals as SubgoalItem[] | undefined,
+					openSubgoals: params.openSubgoals as SubgoalItem[] | undefined,
 					howToRun: params.howToRun,
-					recentlyDone: params.recentlyDone as BulletItem[] | undefined,
-					inProgress: params.inProgress as BulletItem[] | undefined,
-					shelved: params.shelved as BulletItem[] | undefined,
-					waitingOnUser: params.waitingOnUser as BulletItem[] | undefined,
 					replaceLists: params.replaceLists,
 				},
 				meta.sessionId,
@@ -421,7 +456,9 @@ export default function (pi: ExtensionAPI) {
 						[
 							`project: ${meta.projectKey}  [${meta.projectKeySource}]`,
 							`cwd:     ${meta.cwd}`,
-							`state:   ${state.oneLineStatus || "(empty)"}`,
+							`main:    ${state.mainGoal || "(empty)"}`,
+							`current: ${state.currentSubgoal || "(none)"}`,
+							`next:    ${state.nextPlan || "(none)"}`,
 							`decisions: ${store.listDecisions(meta.projectKey, 500).length} (showing ${decisions.length} latest titles)`,
 							...decisions.map((d) => `  - ${d.decidedOn} ${d.title}`),
 							`handoff open: ${open ? open.goal : "(none)"}`,

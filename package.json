@@ -1,6 +1,6 @@
 {
   "name": "pi-project-db",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "SQLite-backed project governance records for Pi: STATE, DECISIONS, and HANDOFF with markdown export",
   "license": "MIT",
   "type": "module",
