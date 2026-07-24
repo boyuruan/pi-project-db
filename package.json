@@ -1,0 +1,55 @@
+{
+  "name": "pi-project-db",
+  "version": "0.1.0",
+  "description": "SQLite-backed project governance records for Pi: STATE, DECISIONS, and HANDOFF with markdown export",
+  "license": "MIT",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/boyuruan/pi-project-db.git"
+  },
+  "homepage": "https://github.com/boyuruan/pi-project-db#readme",
+  "bugs": {
+    "url": "https://github.com/boyuruan/pi-project-db/issues"
+  },
+  "keywords": [
+    "pi-package",
+    "pi",
+    "pi-coding-agent",
+    "sqlite",
+    "state",
+    "decisions",
+    "handoff",
+    "project-management",
+    "extension"
+  ],
+  "files": [
+    "extensions/**/*.ts",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --experimental-strip-types --test test/*.test.ts"
+  },
+  "pi": {
+    "extensions": [
+      "./extensions/project-db"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    },
+    "typebox": {
+      "optional": true
+    }
+  },
+  "engines": {
+    "node": ">=22.5.0"
+  }
+}
