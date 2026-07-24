@@ -4,9 +4,27 @@ SQLite-backed **project governance records** for [Pi](https://pi.dev).
 
 | Record | Role | Root file (export) |
 |--------|------|--------------------|
-| **STATE** | Operation log: status, how to run, done / in progress / shelved / waiting | `STATE.md` |
-| **DECISIONS** | User-approved choices only | `DECISIONS.md` |
+| **STATE** | Macro project situation (not per-tool noise) | `STATE.md` |
+| **DECISIONS** | User-approved long-term choices only | `DECISIONS.md` |
 | **HANDOFF** | Current open handoff for the next session/person | `HANDOFF.md` |
+
+### STATE is not a tool log
+
+**STATE** answers: *If I come back in two weeks, what is true about this project?*
+
+Good STATE content (coarse, durable):
+
+- Feature X is implemented and merged
+- Experiment B5 still not run
+- Waiting on the user to pick storage backend
+
+Bad STATE content (belongs elsewhere):
+
+- Every edit/bash from the last hour → that is **[pi-tool-wal](https://github.com/boyuruan/pi-tool-wal)** audit trail
+- A single approved design choice with alternatives → **DECISIONS**
+- A one-shot “continue here” packet for the next thread → **HANDOFF**
+
+Update STATE when the **macro picture** changes (milestone landed, blocked, shelved, waiting on user)—not after every tool call or every tiny task slice.
 
 **Strategy A:** SQLite is the source of truth. Markdown files are materializations for humans and git. Handoff **history** stays in the DB; `HANDOFF.md` only reflects the current **open** handoff (removed when none).
 
@@ -44,8 +62,8 @@ Scoped by stable `project_key` (same scheme as pi-tool-wal):
 
 | Tool | Purpose |
 |------|---------|
-| `project_state_get` | Read current STATE |
-| `project_state_update` | Update STATE + export `STATE.md` |
+| `project_state_get` | Read current macro STATE |
+| `project_state_update` | Update macro STATE + export `STATE.md` |
 | `project_decision_add` | Append approved decision + export `DECISIONS.md` |
 | `project_decision_list` | List decisions (DB history) |
 | `project_handoff_get` | Current open handoff |
@@ -53,7 +71,7 @@ Scoped by stable `project_key` (same scheme as pi-tool-wal):
 | `project_handoff_close` | Mark consumed/superseded; remove `HANDOFF.md` |
 | `project_handoff_list` | Handoff history from DB |
 
-Call `project_state_update` at the end of each accepted task. Call `project_decision_add` only after explicit user approval.
+Call `project_state_update` when the project’s **overall situation** changed. Call `project_decision_add` only after explicit user approval.
 
 ## Commands
 
@@ -73,11 +91,14 @@ Call `project_state_update` at the end of each accepted task. Call `project_deci
 ```markdown
 ## Records (pi-project-db)
 
-- Update project state via `project_state_update` at the end of each accepted task
-  (exports STATE.md). Do not hand-edit STATE.md structure.
-- Record user-approved long-term choices via `project_decision_add` (exports DECISIONS.md).
-- For cross-session project handoff notes, use `project_handoff_create` (exports HANDOFF.md).
-  History is in the DB (`project_handoff_list`); HANDOFF.md is only the current open item.
+- STATE is the macro project situation (what is done / in flight / blocked /
+  waiting on the user)—not a per-tool operation log. Update via
+  `project_state_update` when that picture changes (exports STATE.md).
+- Record user-approved long-term choices via `project_decision_add`
+  (exports DECISIONS.md).
+- For cross-session project handoff notes, use `project_handoff_create`
+  (exports HANDOFF.md). History: `project_handoff_list`.
+- Do not hand-edit those markdown structures when the extension is active.
 ```
 
 ## Development

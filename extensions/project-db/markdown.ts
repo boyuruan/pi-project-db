@@ -39,7 +39,10 @@ export function renderStateMarkdown(state: ProjectState): string {
 
 	return `# Project state
 
-<!-- Managed by pi-project-db. Edit via tools/commands; do not hand-edit structure. -->
+<!--
+  Managed by pi-project-db. Macro situation only (not a per-tool log).
+  Prefer project_state_update; do not hand-edit structure.
+-->
 
 Updated: ${updated}
 

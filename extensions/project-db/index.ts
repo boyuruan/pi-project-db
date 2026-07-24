@@ -4,6 +4,9 @@
  * Source of truth: ~/.pi/agent/project-db/project.db
  * Materialized files (project root): STATE.md, DECISIONS.md, HANDOFF.md
  *
+ * STATE = macro project situation (milestones, blockers, waiting on user).
+ * It is not a per-tool operation log — that role belongs to pi-tool-wal.
+ *
  * HANDOFF.md reflects only the current open handoff. History is queried from DB.
  *
  * Tools (for the agent):
@@ -166,7 +169,7 @@ export default function (pi: ExtensionAPI) {
 		name: "project_state_get",
 		label: "Project State Get",
 		description:
-			"Read the current project STATE from pi-project-db (SQLite source of truth).",
+			"Read the project's macro STATE (overall situation: what is done, in flight, shelved, waiting on the user). Not a per-tool log.",
 		parameters: Type.Object({}),
 		async execute(_id, _params, _signal, _onUpdate, ctx) {
 			if (!ensureStore(store)) return textResult("project-db unavailable");
@@ -181,7 +184,7 @@ export default function (pi: ExtensionAPI) {
 		name: "project_state_update",
 		label: "Project State Update",
 		description:
-			"Update project STATE in SQLite and export STATE.md. Call at the end of each accepted task. Omitting a field leaves it unchanged. List fields replace by default; set replaceLists=false to append.",
+			"Update the project's macro STATE in SQLite and export STATE.md. Use when the overall situation changed (milestone landed, work blocked, item shelved, waiting on user)—not after every tool call. Keep bullets coarse and durable. Omitting a field leaves it unchanged. List fields replace by default; set replaceLists=false to append.",
 		parameters: Type.Object({
 			oneLineStatus: Type.Optional(Type.String()),
 			howToRun: Type.Optional(Type.String()),
@@ -469,7 +472,8 @@ export default function (pi: ExtensionAPI) {
 							"  /decisions      list decisions",
 							"  /project-handoff [show|list|close]",
 							"",
-							"Agent tools: project_state_*, project_decision_*, project_handoff_*",
+							"Agent tools: project_state_* (macro situation), project_decision_*, project_handoff_*",
+							"STATE ≠ tool-wal: no per-operation noise in STATE.",
 						].join("\n"),
 					);
 				}
@@ -478,7 +482,7 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand("state", {
-		description: "Show current project STATE from pi-project-db",
+		description: "Show macro project STATE (situation, not tool log)",
 		handler: async (_args, ctx) => {
 			if (!ensureStore(store)) {
 				notify(ctx, "project-db unavailable", "error");

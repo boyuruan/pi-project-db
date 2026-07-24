@@ -3,6 +3,9 @@
  *
  * SQLite is the source of truth. Markdown files in the project root are
  * materializations for humans and git (strategy A).
+ *
+ * STATE holds the macro project situation (milestones, blockers, waiting on
+ * the user). It is not a per-tool operation log (see pi-tool-wal).
  */
 
 export type HandoffStatus = "open" | "consumed" | "superseded";
